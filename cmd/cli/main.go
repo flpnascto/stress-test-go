@@ -20,21 +20,29 @@ type StressTestParams struct {
 }
 
 type ReportRequest struct {
-	StatusOk    int
-	StatusOther int
+	StatusOk     int
+	StatusOther  int
+	ErrorRequest int
 }
 
 func main() {
 	params := getParams()
-	// fmt.Println("Params -> ", params)
+	fmt.Println("Starting requests to:", params.Url)
 	reportChannel := make(chan ReportRequest, 1)
 
 	totalOK := 0
 	totalOther := 0
+	totalError := 0
+
+	var wgChannel sync.WaitGroup
+	wgChannel.Add(1)
 	go func() {
+		defer wgChannel.Done()
 		for report := range reportChannel {
 			totalOK += report.StatusOk
 			totalOther += report.StatusOther
+			totalError += report.ErrorRequest
+
 		}
 	}()
 
@@ -50,11 +58,13 @@ func main() {
 	}
 	wg.Wait()
 	close(reportChannel)
+	wgChannel.Wait()
 	elapsed := time.Since(start)
 	fmt.Printf("Elapsed time: %s\n", elapsed)
-	fmt.Println("Total requests:", (totalOK + totalOther))
+	fmt.Println("Total requests:", (totalOK + totalOther + totalError))
 	fmt.Println("Total HTTP 200 response: ", totalOK)
 	fmt.Println("Other responses: ", totalOther)
+	fmt.Println("Error requests: ", totalError)
 
 }
 
@@ -67,23 +77,31 @@ func makeRequest(u string, requests int64, reportChannel chan<- ReportRequest) {
 
 	requestOKCount := 0
 	requestOtherCount := 0
+	requestErrorCount := 0
+
 	for i := 0; i < int(requests); i++ {
-		resp, err := http.Get(u)
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			requestErrorCount++
+			continue
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			// fmt.Println("Error making request:", err)
-			break
+			requestErrorCount++
 		} else {
 			if resp.StatusCode == http.StatusOK {
 				requestOKCount++
 			} else {
 				requestOtherCount++
 			}
+			defer resp.Body.Close()
 		}
-		defer resp.Body.Close()
 	}
 	reportChannel <- ReportRequest{
-		StatusOk:    requestOKCount,
-		StatusOther: requestOtherCount,
+		StatusOk:     requestOKCount,
+		StatusOther:  requestOtherCount,
+		ErrorRequest: requestErrorCount,
 	}
 }
 
